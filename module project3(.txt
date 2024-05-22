@@ -1,0 +1,317 @@
+module project3(
+   input clk, n_reset, mode,	// CLK <-- 1kHz mode=bot1(change mode)
+	input inc,		 				// bot2 (set mode->inc,s_wATCH-> stop/start )
+	input BUS1,                // bus swtich1 (change AM/PM)
+	input bot3,                 // bot3 (S_WATCH-> reset )
+	output [7:0] seg_data,      //FND 2345
+	output [6:0] seg_data2,    //FND1
+	output [3:0] seg_com,     
+	output piezo_out, 
+	output led_state11,led_state10,led_state9,led_state8,led_state7,led_state6,led_state5,led_state4,led_state3,led_state2, led_state1, led_state0, //
+	output reg Twatch_on,watch_on ,sound,AL_on   //stop/start 
+);
+
+	reg [4:0] 	HOUR;				// HOUR: 0 ~ 23 >watch mode FND23
+	reg [5:0] 	MIN;				// MIN: 	0 ~ 59 >watch mode FND45
+	reg [3:0]   T_HOUR;        //T_HOUR: 0~9 >T_clock mode FND1
+	reg [5:0]   T_MIN;         //T_MIN: 0~59 >T_clock mode FND23
+	reg [5:0]   T_SEC;         //T_SEC: 0~59 >T_clock mode FND45
+	reg [4:0]   A_HOUR;        //A_HOUR: 0~23 >A_clock mode FND23
+	reg [5:0]   A_MIN;         //A_MIN: 0~59 >A_clock mode FND45
+	reg [6:0]   S_MSEC;        // S_MSEC: 0~99 >S_WATCH mode  FND45
+	reg [5:0]   S_SEC;         // S_SEC: 0~59 >S_WATCH mode   FND23
+	reg [3:0]   S_MIN;         // S_MIN: 0~9 >S_WATCH mode    FND1
+	reg sel;    // high speed count
+	wire [6:0]   WT_Min;        //FND 45 select S_MSEC or MIN
+	wire [6:0]   WT_Hour;       //FND 23 select HOUR or S_WATCH 
+	reg [8:0]	state;			// mode 
+	reg 			d200_clk, d60000_clk, d10_clk,d100_clk,d1000_clk;
+	wire [3:0] 	H10, H1, M10, M1,AP;   //H10=FND2, H1=FND3, M10=FND4, M1=FND5, AP=FND1 
+	wire			T_on,A_on,set_on, w0, w1,w2,T_w0,T_w1,T_w2;   //A_on->Asetmode,T_on->Tsetmode ,set_on->setmode, w0,w1,w2 ->CLOCK, T_w0,T_w1,T_w2 ->T_clock
+	wire        AmPm;         //AMPM=1 -> P, AMPM=0 -> A
+	wire        key_en,Alarm,T_sound,T_zero; //if key? if Alarm? if Tzero? 
+	wire        [3:0] H12; //h12: 1~12 >AMPM mode FND23
+	integer 		div200, div60000, div10,div100,cnt,div1000;
+	
+	parameter CLOCK = 9'b0_0000_0000, SET_H = 9'b0_0000_0010, SET_M = 9'b0_0000_0001, S_WATCH=9'b0_0000_0100, A_clock1=9'b0_0000_1000, A_clock2=9'b0_0001_0000;	// for state
+	parameter TH = 9'b0_0010_0000, TM=9'b0_0100_0000, TS=9'b0_1000_0000, T_clock = 9'b1_0000_0000;
+	
+	always @(negedge n_reset, posedge mode) //change mode
+	begin
+		if (~n_reset) state <= CLOCK;
+		else
+			case (state)
+			 CLOCK: 	state <= SET_H;
+			 SET_H: 	state <= SET_M;
+			 SET_M:	state <= S_WATCH;
+			 S_WATCH: state <= A_clock1;
+			 A_clock1: state <= A_clock2;
+			 A_clock2: state <= TH;
+			 TH: state <= TM;
+			 TM: state <= TS;
+			 TS: state <= T_clock;
+			 T_clock: state <= CLOCK;
+			endcase 
+	end
+	
+	always @(posedge bot3)  //bot3 -> AL_on 1 or 0 (A_on mode) /alam on off
+	begin 
+	  if(~n_reset)
+	  AL_on <= 0;
+	  else if((A_on==1) && bot3)
+     AL_on <= ~AL_on;
+   end
+	
+	always @(posedge inc)  //inc -> watch_on 1 or 0 (S_WATCH mode)
+	begin 
+	  if(~n_reset)
+	  watch_on <= 1;
+	  else if((state==S_WATCH) && inc)
+     watch_on <= ~watch_on;
+   end	
+	
+	always @(posedge inc)  //inc -> Twatch_on 1 or 0 (T_clock mode)
+	begin 
+	  if(~n_reset)
+	  Twatch_on <= 1;
+	  else if((state==T_clock) && inc)
+     Twatch_on <= ~Twatch_on;
+   end
+
+   always @(posedge inc)  //inc -> sound on/off
+	begin 
+	  if(~n_reset)
+	  sound <= 1;
+	  else if(((Alarm)||(T_zero==0)) && inc)
+     sound <= ~sound;
+   end	
+		
+	
+   assign A_on= (state==A_clock1) || (state==A_clock2);    //A_on=1 ->A_clock mode
+	assign set_on = (state == SET_H) || (state == SET_M);   //set_on=1 ->set mode
+	assign T_on= (state==TH)||(state==TM)||(state==TS);     //T_on=1 -> T_clock mode
+	assign led_state11=(AL_on==1)?1:0;            //led 12= AL on?
+	assign led_state10 = state[8];       //led11= T_clock mode
+	assign led_state9 = state[7];        //led10= T_SEC set 
+	assign led_state8 = state[6];        //led9= T_min set 
+	assign led_state7 = state[5];        //led8= T_HOUR set
+	assign led_state6 = state[4];        //led7=A_MIN set 
+	assign led_state5 = state[3];        //led6=A_HOUR set 
+	assign led_state4 = BUS1;            //led5= AMPMmode
+	assign led_state3 = state[2];        //led4=S_WATCH mode   
+	assign led_state2 = state[0];        //led3=Min set 
+	assign led_state1 = state[1];        //led2=Hour set 
+	assign led_state0 = (state==CLOCK);    //led1=WATCH mode
+	
+	h24Toh12Dec a1(HOUR, AmPm, H12);       //HOUR -> AmPm=A?P? +change H12  
+	
+	always @(negedge d200_clk)        //high speed count= if you press inc for 2Sec ->sel=1;
+	begin
+		if (~n_reset || ~inc)
+		begin
+			cnt <= 0; sel <= 0;
+		end
+		else
+		begin
+			if (cnt == 10) sel <= 1; // sel is set after 10 cycles of d50_clk
+			else			  cnt <= cnt + 1;	
+		end
+		
+	end
+	
+	always @(posedge clk) // clk(1kHz) to be divided by 1000: 1sec(1Hz) //T_clock
+	begin
+		if (~n_reset)
+		begin
+			div1000 <= 0;	d1000_clk <= 0;
+		end
+		else if (div1000 >= 499)
+		begin
+			div1000 <= 0;	d1000_clk <= ~d1000_clk;
+		end
+		else
+			div1000 <= div1000 + 1;	
+	end
+	
+	always @(posedge clk) // clk(1kHz) to be divided by 60000: 60 sec(1/60 Hz) //watch 
+	begin
+		if (~n_reset)
+		begin
+			div60000 <= 0;	d60000_clk <= 0;
+		end
+		else if (div60000 >= 29999)
+		begin
+			div60000 <= 0;	d60000_clk <= ~d60000_clk;
+		end
+		else
+			div60000 <= div60000 + 1;	
+	end
+	
+	always @(posedge clk) // clk(1kHz) to be divided by 200: 0.2 sec(5Hz) -> set 
+	begin
+		if (~n_reset)
+		begin
+			div200 <= 0;	d200_clk <= 0;
+		end
+		else if (div200 >= 99)
+		begin
+			div200 <= 0;	d200_clk <= ~d200_clk;
+		end
+		else
+			div200 <= div200 + 1;	
+	end
+	
+	always @(posedge clk) // clk(1kHz) to be divided by 50: 0.05 sec(20Hz) ->fast count (set)
+	begin
+		if (~n_reset)
+		begin
+			div100 <= 0;	d100_clk <= 0;
+		end
+		else if (div100 >= 49)
+		begin
+			div100 <= 0;	d100_clk <= ~d100_clk;
+		end
+		else
+			div100 <= div100 + 1;	
+	end
+	
+	always @(posedge clk) // clk(1kHz) to be divided by 10: 0.01sec(100Hz) ->stopwatch 
+	begin
+		if (~n_reset)
+		begin
+			div10 <= 0;	d10_clk <= 0;
+		end
+		else if (div10 >= 4)
+		begin
+			div10 <= 0;	d10_clk <= ~d10_clk;
+		end
+		else
+			div10 <= div10 + 1;	
+	end
+	
+	assign w0 = ((set_on==1)||(A_on==1))? ((sel==0)?d200_clk:d100_clk) : ((state==CLOCK)?d60000_clk :d10_clk); //1.set mode? 2.highspeedcount? 3.WATCHmode? 4.S_WATCH mode?
+	always @(negedge n_reset, negedge (w0||bot3) ) //FND 4+5 
+	begin
+		if (~n_reset)begin
+			MIN <= 0;
+			S_MSEC <= 0;
+			A_MIN <=1;
+			end
+		else if ((state == CLOCK) || ((state == SET_M) && inc))  
+			MIN <= (MIN + 1) % 60;
+		else if ((state == S_WATCH) && bot3)
+		   S_MSEC <= 0;
+		else if ((state == S_WATCH) && watch_on)
+		   S_MSEC <=(S_MSEC +1) %100;
+		else if ((state == A_clock2) && inc)
+		   A_MIN <=(A_MIN + 1) % 60;
+		
+		   
+	end
+	
+	assign w1 = ((set_on==1)||(A_on==1))? ((sel==0)?d200_clk:d100_clk) : ((state==CLOCK)? MIN[5] :S_MSEC[6]); 
+
+	always @(negedge n_reset, negedge (w1||bot3) ) //FND 2+3
+	begin
+		if (~n_reset)begin
+			HOUR <= 0;
+			S_SEC <= 0;
+			A_HOUR <= 1;
+			end
+		else if ((state == CLOCK) || ((state == SET_H) && inc))
+			HOUR <= (HOUR + 1) % 24;
+		else if ((state==S_WATCH)&& bot3)
+		   S_SEC <=0;
+		else if ((state==S_WATCH)&& watch_on)
+		   S_SEC <= (S_SEC +1) %60;
+		else if ((state == A_clock1) && inc)
+		   A_HOUR <= (A_HOUR + 1) % 24;
+		
+		
+	end
+	
+   assign w2 = S_SEC[5];
+	always @(negedge n_reset,negedge (w2||bot3) ) //FND 1
+	begin
+	   if (~n_reset)
+		   S_MIN <= 0;
+	   else if ((state==S_WATCH)&&bot3)
+		   S_MIN <= 0;
+		else if ((state==S_WATCH)&& watch_on)
+		   S_MIN <= (S_MIN +1) %10;
+		
+		
+	end
+	//T_clock mode 
+	assign T_w0=(T_on)?d200_clk:d1000_clk;
+   always @(negedge n_reset, posedge T_w0 ) //FND 4+5  
+	begin
+		if (~n_reset)
+		   T_SEC <= 0;
+		else if (((state == TS) && inc))
+			T_SEC <= (T_SEC + 1) % 60;
+		else if ((state == T_clock) && Twatch_on&&T_zero)   //T_zero->stop 
+		   T_SEC <= (60+(T_SEC -1 )) % 60;
+	end 
+	
+	assign T_w1=(T_on)?d200_clk:T_SEC[5];
+   always @(negedge n_reset, posedge T_w1 ) //FND 2+3 
+	begin
+		if (~n_reset)
+		   T_MIN <= 0;
+		else if (((state == TM) && inc))
+			T_MIN<= (T_MIN + 1) % 60;
+		else if ((state == T_clock)&&Twatch_on&&T_zero)    //T_zero->stop 
+		   T_MIN <= (60+(T_MIN -1 )) % 60;
+	end	
+	
+   assign T_w2=(T_on)?d200_clk:T_MIN[5];
+	always @(negedge n_reset, posedge T_w2 ) //FND 1 
+	begin
+		if (~n_reset)
+		   T_HOUR <= 0;
+		else if (((state == TH) && inc))
+			T_HOUR<= (T_HOUR + 1) % 10;
+		else if ((state == T_clock)&&Twatch_on&&T_zero)    //T_zero->stop 
+		   T_HOUR <= (10+(T_HOUR -1 )) % 10;
+	end	
+
+	assign WT_Min=(state==S_WATCH)? S_MSEC : ((A_on)?{1'b0,A_MIN}:((T_on||state==T_clock)?{1'b0,T_SEC}:{1'b0, MIN}));  
+   //S_watch -> S_MSEC , Alarm set -> A_MIN	, Tset or T_clock mode -> T_SEC , other mode ->min 
+	assign WT_Hour=(state==S_WATCH)? {1'b0,S_SEC} :((A_on)?{2'b00,A_HOUR}:((T_on||state==T_clock)?{1'b0,T_MIN}:((BUS1)? {2'b00,H12} : {2'b00, HOUR})));
+   //S_watch -> S_SEC , Alarm set -> A_HOUR	, Tset or T_clock mode -> T_MIN , AMPM mode-> H12 , other mode->HOUR
+	WT_sep 
+		HOUR_SEP(WT_Hour, H10, H1),  //[6:0]FND 2+3 -> [3:0]FND 2, [3:0]FND 3 
+		MIN_SEP(WT_Min, M10, M1);    //[6:0]FND 4+5 -> [3:0]FND 4, [3:0]FND 5
+		
+	FND_Driver
+		U1 (.n_reset(n_reset), .clk(clk), .blink(set_on), .blink_digit(state), .in0(M1), .in1(M10), .in2(H1), .in3(H10), .seg_data(seg_data), .seg_com(seg_com));
+
+   assign AP=(state==S_WATCH)?S_MIN:((T_on||state==T_clock)?T_HOUR:((BUS1)?((AmPm)? 4'd11:4'd10):4'd12));
+	// S_WATCH -> S_MIN , T_SET or T_cloc mode ->T_HOUR ,AMPM&&P->P(4'd11) ,AMPM&&A->A(4'd(10)), AMPM off-> 4'd12 (off)
+	assign seg_data2[6:0]=bcd_4x7(AP);
+	function [6:0] bcd_4x7(input [3:0] in);  //4bit->7seg
+	begin
+		case (in)
+		 0: bcd_4x7 = 7'b011_1111;
+		 1: bcd_4x7 = 7'b000_0110;
+		 2: bcd_4x7 = 7'b101_1011;
+		 3: bcd_4x7 = 7'b100_1111;
+		 4: bcd_4x7 = 7'b110_0110;
+		 5: bcd_4x7 = 7'b110_1101;
+		 6: bcd_4x7 = 7'b111_1101;
+		 7: bcd_4x7 = 7'b010_0111;
+		 8: bcd_4x7 = 7'b111_1111;
+		 9: bcd_4x7 = 7'b110_1111;
+		 10: bcd_4x7 =7'b111_0111;   //A
+		 11: bcd_4x7 =7'b111_0011;    //P
+		 default: bcd_4x7 = 7'b000_0000;   //off
+		endcase
+	end
+	endfunction
+	assign T_zero=((T_SEC==0)&&(T_MIN==0)&&(T_HOUR==0))?0:1; //(T_clock==0/00/00time)?
+	assign T_sound=(state==T_clock)?((T_zero==0)?1:0):0;   //(T_zeor&&T_clock mode)?
+	assign Alarm = (AL_on)?(((A_MIN==MIN)&&(A_HOUR==HOUR))?1:0):0; //(Alarm clock ==watch clock)?
+	assign key_en=|inc|mode|bot3;
+	assign piezo_out=(key_en|(Alarm&&sound)|(T_sound&&sound))& clk;//if key? if Alarm? if T_sound?->piezo
+endmodule
